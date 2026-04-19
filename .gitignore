@@ -1,0 +1,67 @@
+# -----------------------------------------------------------------------------
+# Secure Banking Project - Root .gitignore
+# Backend (Python/FastAPI) + shared repo artifacts
+# -----------------------------------------------------------------------------
+
+# --- Python bytecode / caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Local secrets / environment files ---
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# --- Build / packaging artifacts ---
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# --- Runtime / local temp ---
+*.pid
+*.pid.lock
+*.out
+*.tmp
+*.temp
+logs/
+*.log
+
+# --- Databases / local data ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- Node artifacts (repo root, if present) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Frontend artifacts (extra safety at root level) ---
+secure-bank-frontend/node_modules/
+secure-bank-frontend/dist/
+secure-bank-frontend/dist-ssr/
+

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Infrastructure (Crucial Addition)
+# You don't want your Terraform state or scripts inside your app container!
+secure-bank-infra/
+terraform.tfstate*
+.terraform/
+destroy.sh
+
+# Version Control
+.git
+.gitignore
+
+# Docker & Logs
+Dockerfile
+.dockerignore
+*.log
