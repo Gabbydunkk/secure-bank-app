@@ -9,10 +9,10 @@ on:
 env:
   # Adjusted to match the exact Terraform naming conventions
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: secure-bank-backend
-  ECS_SERVICE: secure-bank-service
-  ECS_CLUSTER: secure-bank-cluster
-  ECS_TASK_DEFINITION: secure-bank-backend
+  ECR_REPOSITORY: secure-banking-backend
+  ECS_SERVICE: secure-banking-service
+  ECS_CLUSTER: secure-banking-cluster
+  ECS_TASK_DEFINITION: secure-banking-backend
   CONTAINER_NAME: backend
 
 jobs:
