@@ -16,7 +16,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AppShell } from '../../components/layout/AppShell'
 import { useAuth } from '../../contexts/AuthContext'
 import { http } from '../../lib/http'
-import type { TransactionResponse, FraudAlertListResponse, FraudAlertResponse } from '../../types/api'
+import type { TransactionResponse, FraudAlertListResponse, FraudAlertResponse, UserBalanceSummary } from '../../types/api'
 
 // ── Risk gauge SVG ────────────────────────────────────────────────────────
 // Renders a semicircle arc gauge (like a speedometer).
@@ -220,6 +220,7 @@ export function TransactionDetailPage() {
   const [alert, setAlert] = useState<FraudAlertResponse | null>(null)
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
+  const [balance, setBalance] = useState<UserBalanceSummary | null>(null)
 
   const [processState, setProcessState]   = useState<ActionState>('idle')
   const [blockState, setBlockState]       = useState<ActionState>('idle')
@@ -257,6 +258,12 @@ export function TransactionDetailPage() {
       })
       .catch(() => {})
   }, [txn, hasRole])
+
+  useEffect(() => {
+    http.get<UserBalanceSummary>('/users/me/balance')
+      .then(r => setBalance(r.data))
+      .catch(() => setBalance(null))
+  }, [])
 
   // ── Actions ─────────────────────────────────────────────────────────────
 
@@ -384,6 +391,14 @@ export function TransactionDetailPage() {
 
   const isAnalyst = hasRole('analyst')
   const timeline  = txn ? buildTimeline(txn) : []
+  const signedTxnAmount = txn
+    ? (txn.transaction_type === 'deposit' ? parseFloat(txn.amount) : -parseFloat(txn.amount))
+    : 0
+  const affectsBalance = txn ? ['completed', 'pending', 'processing', 'flagged'].includes(txn.status) : false
+  const projectedAfter = balance && txn && affectsBalance ? balance.current_balance + signedTxnAmount : balance?.current_balance
+  const beforeAmount = balance && txn && txn.status === 'completed'
+    ? balance.current_balance - signedTxnAmount
+    : balance?.current_balance
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -485,6 +500,38 @@ export function TransactionDetailPage() {
                 <p className="text-[#aaa] text-xs font-mono">
                   ID: TXN_{txn.id.toUpperCase()}
                 </p>
+              </div>
+
+              <div className="bg-white rounded-xl border border-black/5 p-6">
+                <p className="text-[#888] text-[10px] font-bold tracking-widest uppercase mb-4">
+                  Balance Impact
+                </p>
+                <div className="grid grid-cols-3 gap-4 items-end">
+                  <div>
+                    <p className="text-[#888] text-[10px] font-bold tracking-widest uppercase mb-1">Before</p>
+                    <p className="text-[#0A0F0A] text-lg font-semibold">
+                      {beforeAmount != null
+                        ? `$${beforeAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[#888] text-[10px] font-bold tracking-widest uppercase mb-1">Movement</p>
+                    <p className={`text-lg font-semibold ${signedTxnAmount >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {signedTxnAmount >= 0 ? '+' : '−'}${Math.abs(signedTxnAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[#888] text-[10px] font-bold tracking-widest uppercase mb-1">
+                      {txn.status === 'completed' ? 'After' : 'Projected After'}
+                    </p>
+                    <p className="text-[#0A0F0A] text-lg font-semibold">
+                      {projectedAfter != null
+                        ? `$${projectedAfter.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : '—'}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* Origin / Destination — 2 col from Stitch */}

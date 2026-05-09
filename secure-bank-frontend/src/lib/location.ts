@@ -15,7 +15,35 @@ export interface LocationContext {
   city: string | null
 }
 
+const DEMO_LOCATION_KEY = 'demo.location.override.v1'
 let _cachedLocation: LocationContext | null = null
+
+function readDemoOverride(): LocationContext | null {
+  try {
+    const raw = window.localStorage.getItem(DEMO_LOCATION_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as LocationContext
+    if (!parsed || typeof parsed !== 'object') return null
+    return {
+      country: parsed.country ?? null,
+      city: parsed.city ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function setDemoLocationOverride(location: LocationContext | null): void {
+  if (location == null) {
+    window.localStorage.removeItem(DEMO_LOCATION_KEY)
+    return
+  }
+  window.localStorage.setItem(DEMO_LOCATION_KEY, JSON.stringify(location))
+}
+
+export function getDemoLocationOverride(): LocationContext | null {
+  return readDemoOverride()
+}
 
 function parseCountryFromLocale(locale: string | undefined): string | null {
   if (!locale) return null
@@ -40,6 +68,9 @@ function parseCityFromTimeZone(timeZone: string | undefined): string | null {
 }
 
 export async function getLocationContext(): Promise<LocationContext> {
+  const demoOverride = readDemoOverride()
+  if (demoOverride) return demoOverride
+
   if (_cachedLocation) return _cachedLocation
 
   const locale =

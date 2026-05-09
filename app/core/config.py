@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql://postgres:fake_placeholder@localhost:5432/fake_db"
     SECRET_KEY: str = "fake_placeholder_secret_key_do_not_use"
+    
 
     # JWT
     ALGORITHM: str = "HS256"

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { DemoControlPanel } from '../../components/demo/DemoControlPanel'
 
 type LoginForm = {
   emailOrUsername: string
@@ -361,6 +362,7 @@ export function LoginPage() {
           <span className="text-white/15 text-[10px]">© {new Date().getFullYear()} GabbyBank</span>
         </div>
       </div>
+      <DemoControlPanel compact />
     </div>
   )
 }

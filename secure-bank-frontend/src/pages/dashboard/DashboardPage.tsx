@@ -17,7 +17,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { AppShell } from '../../components/layout/AppShell'
 import { useAuth } from '../../contexts/AuthContext'
 import { http } from '../../lib/http'
-import type { TransactionListResponse, TransactionResponse, FraudAlertListResponse } from '../../types/api'
+import type { TransactionListResponse, TransactionResponse, FraudAlertListResponse, UserBalanceSummary } from '../../types/api'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -101,6 +101,7 @@ export function DashboardPage() {
 
   const [openAlerts, setOpenAlerts] = useState(0)
   const [alertsLoading, setAlertsLoading] = useState(true)
+  const [balance, setBalance] = useState<UserBalanceSummary | null>(null)
 
   // Fetch recent transactions
   useEffect(() => {
@@ -118,12 +119,25 @@ export function DashboardPage() {
       .finally(() => setAlertsLoading(false))
   }, [])
 
+  useEffect(() => {
+    http.get<UserBalanceSummary>('/users/me/balance')
+      .then(r => setBalance(r.data))
+      .catch(() => setBalance(null))
+  }, [])
+
   // Filter transactions for the ledger activity tabs
   const filteredTxns = transactions.filter(t => {
     if (txnFilter === 'OUTFLOW') return parseFloat(t.amount) < 0 || ['transfer', 'payment', 'withdrawal'].includes(t.transaction_type)
     if (txnFilter === 'INFLOW')  return t.transaction_type === 'deposit'
     return true
   })
+
+  const liquidBalance = balance?.current_balance ?? 0
+  const dollars = Math.floor(liquidBalance)
+  const cents = Math.round((liquidBalance - dollars) * 100)
+  const monthDelta = balance
+    ? ((balance.total_inflows - balance.total_outflows) / Math.max(balance.opening_balance, 1)) * 100
+    : 0
 
   return (
     <AppShell>
@@ -142,9 +156,11 @@ export function DashboardPage() {
                 className="text-[#0A0F0A] text-5xl font-bold tracking-tight leading-none"
                 style={{ fontFamily: "'Playfair Display', serif" }}
               >
-                $2,482,190
+                ${dollars.toLocaleString('en-US')}
               </span>
-              <span className="text-[#0A0F0A] text-3xl font-bold leading-none mb-0.5">.42</span>
+              <span className="text-[#0A0F0A] text-3xl font-bold leading-none mb-0.5">
+                .{cents.toString().padStart(2, '0')}
+              </span>
             </div>
 
             {/* Chips row */}
@@ -153,7 +169,9 @@ export function DashboardPage() {
                 <svg className="w-3 h-3 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                 </svg>
-                <span className="text-emerald-700 text-[10px] font-bold tracking-wider uppercase">+2.4% This Month</span>
+                <span className="text-emerald-700 text-[10px] font-bold tracking-wider uppercase">
+                  {monthDelta >= 0 ? '+' : ''}{monthDelta.toFixed(2)}% Net Movement
+                </span>
               </div>
               <div className="flex items-center gap-1.5 bg-[#F2F2EF] border border-[#E0E0DC] rounded-full px-3 py-1">
                 <svg className="w-3 h-3 text-[#888]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -197,8 +215,8 @@ export function DashboardPage() {
                 }
                 badge="Available"
                 badgeColour="text-emerald-600"
-                value="$840,000"
-                label="Liquid Balance"
+                value={`$${liquidBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                label="Liquid Balance (Completed Txns)"
               />
               <StatCard
                 icon={
@@ -316,6 +334,9 @@ export function DashboardPage() {
                         TXN_{txn.id.slice(0, 8).toUpperCase()}
                       </p>
                       <p className="text-[#bbb] text-xs">{new Date(txn.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                      <p className="text-[#bbb] text-xs font-mono">
+                        {new Date(txn.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </p>
                     </div>
                     {/* Amount */}
                     <p className={`text-sm font-semibold ${

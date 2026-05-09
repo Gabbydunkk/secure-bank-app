@@ -5,6 +5,7 @@ Designed with SOLID: rule interface, pluggable rules, engine, and alert persiste
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Protocol
+import json
 import uuid
 
 from sqlalchemy.orm import Session
@@ -74,6 +75,63 @@ class LocationRule:
             alert_type="location_anomaly",
             description=f"Login or transaction from restricted location: {country}",
             triggered_key="restricted_location",
+        )
+
+
+class GeolocationAnomalyRule:
+    """
+    Baseline geolocation anomaly:
+    flags activity from a country not seen in the user's typical locations.
+    """
+
+    SCORE_DELTA = 30
+
+    def evaluate(self, db: Session, data: FraudRuleInput) -> Optional[RuleResult]:
+        if not data.location_country:
+            return None
+
+        pattern = (
+            db.query(UserBehaviorPattern)
+            .filter(UserBehaviorPattern.user_id == data.user_id)
+            .first()
+        )
+        if not pattern:
+            return None
+
+        raw_locations = pattern.typical_locations or []
+        if isinstance(raw_locations, str):
+            try:
+                raw_locations = json.loads(raw_locations)
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(raw_locations, list):
+            return None
+
+        baseline_countries = {
+            str(item).split(":", 1)[0].upper()
+            for item in raw_locations
+            if isinstance(item, str) and item.strip()
+        }
+        if not baseline_countries:
+            return None
+
+        current_country = data.location_country.upper()
+        if current_country in baseline_countries:
+            return None
+
+        return RuleResult(
+            score_delta=self.SCORE_DELTA,
+            severity="medium",
+            alert_type="location_anomaly",
+            description=(
+                f"Geolocation anomaly: current country {current_country} "
+                f"not in user's recent baseline {sorted(baseline_countries)}"
+            ),
+            triggered_key="geolocation_anomaly",
+            extra={
+                "current_country": current_country,
+                "baseline_countries": sorted(baseline_countries),
+            },
         )
 
 
@@ -249,6 +307,7 @@ class FraudRuleEngine:
     def __init__(self, rules: Optional[list[IFraudRule]] = None):
         self._rules = rules or [
             LocationRule(),
+            GeolocationAnomalyRule(),
             VelocityRule(),
             LargeAmountRule(),
             DeviceAnomalyRule(),

@@ -112,6 +112,15 @@ export interface KnownDeviceListResponse {
   total: number
 }
 
+export interface UserBalanceSummary {
+  opening_balance: number
+  current_balance: number
+  total_inflows: number
+  total_outflows: number
+  pending_outflows: number
+  pending_inflows: number
+}
+
 // ── Transactions ─────────────────────────────────────────────────────────
 
 export interface TransactionCreate {

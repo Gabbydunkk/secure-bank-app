@@ -23,6 +23,7 @@ import { DashboardPage }       from './pages/dashboard/DashboardPage'
 import { TransactionsPage }    from './pages/transactions/TransactionsPage'
 import { TransactionDetailPage }   from './pages/transactions/TransactionDetailPage'
 import { NewTransactionPage }  from './pages/transactions/NewTransactionPage'
+import { AuditTrailPage } from './pages/audit/AuditTrailPage'
 // import { FraudAlertsPage }     from './pages/fraud/FraudAlertsPage'
 // import { FraudAlertDetail }    from './pages/fraud/FraudAlertDetail'
 // import { AuditLogPage }        from './pages/audit/AuditLogPage'
@@ -123,7 +124,7 @@ export default function App() {
             path="/audit"
             element={
               <RequireAuth>
-                <Placeholder name="Audit Log" />
+                <AuditTrailPage />
               </RequireAuth>
             }
           />

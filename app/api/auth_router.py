@@ -121,7 +121,7 @@ def login(
     - 200 OK → tokens issued (check risk_flagged field in response)
     - 401 Unauthorized → invalid credentials or account locked
     - 403 Forbidden → fraud block or account suspended
-    - 202 Accepted → MFA challenge required (client must call /auth/mfa/verify)
+    - 202 Accepted → MFA verification required (client must call /auth/mfa/verify)
     """
     ip = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
@@ -157,8 +157,9 @@ def login(
     except FraudBlockedError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except FraudChallengeRequiredError as exc:
-        # Fraud challenge (NOT MFA) — no mfa_token issued
-        raise HTTPException(status_code=status.HTTP_202_ACCEPTED, detail=str(exc))
+        # Fraud required step-up, but the account has no enabled MFA method.
+        # Fail closed instead of returning a 202 without an mfa_token.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

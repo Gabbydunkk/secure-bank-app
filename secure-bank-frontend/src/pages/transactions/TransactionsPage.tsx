@@ -242,6 +242,9 @@ export function TransactionsPage() {
                   <p className="text-[#bbb] text-xs mt-0.5">
                     {new Date(txn.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   </p>
+                  <p className="text-[#bbb] text-xs font-mono">
+                    {new Date(txn.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </p>
                 </div>
 
                 {/* Amount */}

@@ -27,6 +27,26 @@ from app.schemas.audit import AuditLogListResponse, AuditLogResponse
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
+def _to_audit_response(log: AuditLog) -> AuditLogResponse:
+    """Normalize ORM row into API-safe AuditLogResponse."""
+    old_values = log.old_values if isinstance(log.old_values, dict) else None
+    new_values = log.new_values if isinstance(log.new_values, dict) else None
+    return AuditLogResponse(
+        id=log.id,
+        user_id=log.user_id,
+        action=log.action,
+        entity_type=log.entity_type,
+        entity_id=log.entity_id,
+        old_values=old_values,
+        new_values=new_values,
+        ip_address=str(log.ip_address) if log.ip_address is not None else None,
+        user_agent=log.user_agent,
+        success=log.success,
+        error_message=log.error_message,
+        created_at=log.created_at,
+    )
+
+
 # ---------------------------------------------------------------------------
 # GET /audit/logs/
 # Paginated list of audit logs for the current user
@@ -82,7 +102,7 @@ def list_audit_logs(
         .all()
     )
 
-    rows = [AuditLogResponse.model_validate(log) for log in logs]
+    rows = [_to_audit_response(log) for log in logs]
     return AuditLogListResponse(items=rows, logs=rows, total=total)
 
 
@@ -120,4 +140,4 @@ def get_audit_log(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Audit log entry not found",
         )
-    return AuditLogResponse.model_validate(log)
+    return _to_audit_response(log)

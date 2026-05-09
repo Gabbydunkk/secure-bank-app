@@ -353,6 +353,39 @@ class TestPatternAnomalyRuleIntegration:
         assert result is None
 
 
+class TestGeolocationAnomalyRuleIntegration:
+
+    def test_new_country_outside_baseline_triggers_rule(self):
+        from app.services.fraud_service import GeolocationAnomalyRule
+        from app.schemas.fraud import FraudRuleInput
+
+        db = MagicMock()
+        p = _pattern(locations=["GB:London", "US:New York"])
+        db.query.return_value.filter.return_value.first.return_value = p
+
+        result = GeolocationAnomalyRule().evaluate(
+            db,
+            FraudRuleInput(user_id=uuid.uuid4(), location_country="DE"),
+        )
+        assert result is not None
+        assert result.triggered_key == "geolocation_anomaly"
+        assert result.alert_type == "location_anomaly"
+
+    def test_baseline_country_does_not_trigger_rule(self):
+        from app.services.fraud_service import GeolocationAnomalyRule
+        from app.schemas.fraud import FraudRuleInput
+
+        db = MagicMock()
+        p = _pattern(locations=["GB:London", "US:New York"])
+        db.query.return_value.filter.return_value.first.return_value = p
+
+        result = GeolocationAnomalyRule().evaluate(
+            db,
+            FraudRuleInput(user_id=uuid.uuid4(), location_country="GB"),
+        )
+        assert result is None
+
+
 # ============================================================================
 # transaction_service hook placement
 # ============================================================================

@@ -79,7 +79,7 @@ FE->>API: POST /auth/login
 API->>AS: login(credentials, context headers)
 AS->>DB: validate user + password + account status
 AS->>DB: check mfa_enabled
-alt MFA enabled
+  alt MFA enabled
   AS-->>API: MFARequired(mfa_pending_token)
   API-->>FE: 202 Accepted (mfa_required=true)
   U->>FE: Enter TOTP code
@@ -94,7 +94,7 @@ alt MFA enabled
     AS-->>API: access + refresh tokens
     API-->>FE: 200 OK
   else block
-    API-->>FE: 403/401 blocked by policy
+    API-->>FE: 403 blocked by fraud policy
   end
 else MFA not enabled
   AS->>FR: evaluate login risk
@@ -192,6 +192,46 @@ erDiagram
     boolean success
     datetime created_at
   }
+
+  LOGIN_ATTEMPTS {
+    uuid id PK
+    uuid user_id FK
+    string email
+    string ip_address
+    string user_agent
+    boolean success
+    string failure_reason
+    boolean mfa_required
+    boolean mfa_success
+    string location_country
+    string location_city
+    datetime attempted_at
+  }
+
+  KNOWN_DEVICES {
+    uuid id PK
+    uuid user_id FK
+    string device_fingerprint
+    string device_name
+    string device_type
+    datetime first_seen
+    datetime last_seen
+    boolean is_trusted
+    datetime trust_expires_at
+  }
+
+  USER_BEHAVIOR_PATTERNS {
+    uuid id PK
+    uuid user_id FK
+    json typical_login_hours
+    json typical_locations
+    json typical_devices
+    decimal average_transaction_amount
+    decimal max_transaction_amount
+    int typical_transaction_frequency
+    datetime last_updated
+  }
+```
 ```
 
 ---
@@ -227,7 +267,7 @@ flowchart LR
   API -- SQLAlchemy --> DB[(PostgreSQL)]
   API -- Rule Evaluation Calls --> FRAUD[Fraud Service]
   API -- TOTP Verify + Secret Decrypt --> MFA[MFA Module]
-  API -- Audit Write --> AUDIT[(Audit Logs)]
+  API -- Audit Write --> AUDIT[(Audit Logs Table)]
 
   FE -- Headers --> API
   H1[X-Device-Fingerprint]
@@ -236,6 +276,13 @@ flowchart LR
   H1 --> API
   H2 --> API
   H3 --> API
+
+  FE -- POST /auth/login --> API
+  FE -- POST /auth/mfa/verify --> API
+  FE -- POST /auth/refresh --> API
+  FE -- POST /transactions --> API
+  FE -- GET /fraud/alerts --> API
+  FE -- GET /audit/logs --> API
 ```
 
 ---
@@ -270,4 +317,3 @@ Use clear labels, actor boundaries, and banking-grade visual style suitable for 
 - If a tool supports one format only:
   - Use PlantUML for use case
   - Use Mermaid for sequence, ER, state, and flow
-

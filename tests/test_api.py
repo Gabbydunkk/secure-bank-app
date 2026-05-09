@@ -349,14 +349,15 @@ class TestLogin:
         assert r.status_code == 403
         assert "blocked" in r.json()["detail"].lower()
 
-    def test_mfa_challenge_returns_202(self, client_no_auth):
-        """MFA required — client must call /auth/mfa/verify → 202 Accepted."""
+    def test_unavailable_fraud_challenge_returns_403(self, client_no_auth):
+        """Fraud challenge without an MFA method fails closed instead of returning a broken 202."""
         with patch("app.services.auth_service.login",
-                   side_effect=FraudChallengeRequiredError("MFA verification step required")):
+                   side_effect=FraudChallengeRequiredError("Security challenge required, but no MFA method is enabled")):
             r = client_no_auth.post(self.URL, json={
                 "email": "alice@example.com", "password": "SecurePass123!",
             })
-        assert r.status_code == 202
+        assert r.status_code == 403
+        assert "challenge" in r.json()["detail"].lower()
 
     def test_locked_account_returns_401(self, client_no_auth):
         with patch("app.services.auth_service.login",

@@ -10,6 +10,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import type { UserRole } from '../../types/api'
+import { DemoControlPanel } from '../demo/DemoControlPanel'
 
 // ── Nav item definition ───────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ const Icons = {
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard',        href: '/dashboard',       requiredRole: null,       icon: Icons.grid },
   { label: 'Transactions',     href: '/transactions',    requiredRole: null,       icon: Icons.transactions },
+  { label: 'Audit Trail',      href: '/audit',           requiredRole: null,       icon: Icons.audit },
   { label: 'Security',         href: '/settings',        requiredRole: null,       icon: Icons.shield },
   { label: 'Fraud Workspace',  href: '/analyst/fraud',   requiredRole: 'analyst',  icon: Icons.fraud },
   { label: 'Analyst Tools',    href: '/analyst/tools',   requiredRole: 'analyst',  icon: Icons.analyst },
@@ -277,6 +279,7 @@ export function AppShell({ children }: AppShellProps) {
           {children}
         </main>
       </div>
+      <DemoControlPanel />
     </div>
   )
 }

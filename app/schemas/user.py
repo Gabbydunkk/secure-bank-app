@@ -148,4 +148,14 @@ class KnownDeviceListResponse(BaseModel):
     total: int
     # Legacy compatibility for clients expecting "devices".
     devices: list[KnownDeviceResponse]
+
+
+class UserBalanceSummary(BaseModel):
+    """Computed balance summary for demo and presentation workflows."""
+    opening_balance: float
+    current_balance: float
+    total_inflows: float
+    total_outflows: float
+    pending_outflows: float
+    pending_inflows: float
     

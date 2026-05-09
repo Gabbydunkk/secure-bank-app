@@ -1,4 +1,12 @@
 {
+  "name": "secure_banking",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix secure-bank-frontend run dev",
+    "build": "npm --prefix secure-bank-frontend run build",
+    "lint": "npm --prefix secure-bank-frontend run lint",
+    "preview": "npm --prefix secure-bank-frontend run preview"
+  },
   "dependencies": {
     "axios": "^1.14.0",
     "react-router-dom": "^7.13.2"

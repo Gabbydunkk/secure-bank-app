@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { SecurityBar } from './LoginPage'
+import { DemoControlPanel } from '../../components/demo/DemoControlPanel'
 
 // MFA_PENDING_EXPIRE_MINUTES is 5 in your backend config — 300 seconds
 const SESSION_SECONDS = 300
@@ -370,6 +371,7 @@ export function MfaVerifyPage() {
           <span className="text-emerald-500/60 text-[10px] tracking-widest uppercase">End-to-End Encrypted</span>
         </div>
       </div>
+      <DemoControlPanel compact />
     </div>
   )
 }

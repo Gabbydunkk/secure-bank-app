@@ -829,6 +829,262 @@ Likely questions:
 
 ---
 
+## 5A. Quick Answers To File-by-File Likely Questions
+
+Use this section when the panel asks one of the short file-level questions from Section 5. These answers are intentionally direct so you can respond quickly before moving back to the code.
+
+### Backend Entry And Configuration
+
+#### Why not put logic directly in `main.py`?
+
+Because `main.py` is the composition root. Its job is to create the FastAPI app, configure middleware, and attach routers. Login rules, transaction rules, fraud scoring, and admin behavior belong in services where they can be tested and reused.
+
+#### Why use middleware here instead of in every route?
+
+Middleware is for cross-cutting behavior that applies to many or all requests. CORS and trusted-host checks should wrap the application consistently instead of being repeated manually in every endpoint.
+
+#### Why are docs potentially disabled in production?
+
+Interactive API docs are useful during development, but in production they may reveal endpoint structure, schemas, and behavior to attackers. Disabling or restricting them reduces information exposure.
+
+#### Why is `SECRET_KEY` required with no default?
+
+The secret key protects token signing and other sensitive cryptographic operations. A default key would be dangerous because multiple deployments could accidentally share the same predictable secret. Requiring it forces each environment to supply its own secure value.
+
+#### Why keep fraud thresholds configurable?
+
+Fraud policy is operational policy. Thresholds may need tuning as transaction patterns, user behavior, or risk appetite changes. Configuration allows adjustment without rewriting and redeploying code.
+
+#### Why use dependency injection for DB sessions?
+
+Dependency injection gives each request a controlled database session and guarantees cleanup after the request finishes. It also makes routes easier to test because the database dependency can be overridden in tests.
+
+#### Why configure pool size explicitly?
+
+Connection pooling controls how many database connections the app can hold and how it behaves under load. Explicit settings make performance and resource usage predictable instead of relying on hidden defaults.
+
+### Data Modeling
+
+#### Why store session records in the database if JWTs are stateless?
+
+Because JWT alone cannot support strong operational control. The session record lets the system revoke access, track logout, bind tokens to device/IP context, and invalidate suspicious or admin-targeted sessions before the JWT naturally expires.
+
+#### Why model `KnownDevice` separately?
+
+Known devices are a fraud signal with their own lifecycle: first seen, last seen, trusted state, and user association. Keeping them separate avoids mixing device intelligence into the user table and allows device anomaly detection to remain focused and testable.
+
+#### Why store `AuditLog` as a first-class table?
+
+Audit logs are accountability records, not incidental metadata. A first-class table makes it possible to query, preserve, and review sensitive actions across users, sessions, transactions, alerts, and admin changes.
+
+### Security Primitives
+
+#### Why hash tokens in the database?
+
+If the database is leaked, raw stored tokens would be immediately usable. Hashing means the system can verify a presented token without storing the usable token itself.
+
+#### Why use access plus refresh instead of one long token?
+
+Short-lived access tokens reduce the damage if an access token is stolen. Refresh tokens allow the session to continue without forcing constant login, but they can be stored, rotated, and revoked more carefully.
+
+#### Why distinguish `type=access` and `type=mfa_pending`?
+
+Token purpose must be explicit. An access token authorizes normal API actions, while an MFA pending token only proves that the user has passed the first login step and must complete MFA. This prevents token confusion.
+
+#### Why encrypt MFA secrets instead of hashing them?
+
+Passwords can be hashed because the system only needs to verify them. TOTP secrets must be recovered so the server can generate the expected time-based code. That is why encryption at rest is the correct design.
+
+#### Why support backup codes?
+
+Backup codes provide a controlled recovery path if the user loses access to their authenticator app. They prevent account recovery from becoming either impossible or dangerously dependent on disabling MFA without proof.
+
+#### Why not Redis now?
+
+The current in-memory rate limiter is enough to demonstrate the security concept in a single-process prototype. Redis is the right production step when multiple app instances need to share rate-limit state.
+
+#### What changes in production with multiple app instances?
+
+Any process-local state becomes unreliable across instances. Rate limits, policy settings, session revocation signals, and operational counters should move to shared storage such as Redis or the database so all instances enforce the same rules.
+
+### Authorization And Routers
+
+#### Why check the session table if JWT is already valid?
+
+A valid JWT only proves the token was issued and has not expired. The session table proves the session is still active. That gives the system logout, forced revocation, and compromised-session containment.
+
+#### Why create named dependencies like `require_analyst`?
+
+Named dependencies make authorization rules reusable and readable. A route protected by `require_analyst` immediately communicates its security requirement, and the rule is implemented once instead of duplicated.
+
+#### Why is role rank useful?
+
+Role rank expresses hierarchy. If admin outranks analyst, the system can allow admins to perform analyst-level actions without writing separate checks for every endpoint.
+
+#### Why return `202 Accepted` for MFA-required login?
+
+`202 Accepted` shows that the password step was accepted but the login workflow is not complete. The user is not fully authenticated until MFA verification succeeds.
+
+#### Why is `/auth/mfa/verify` public?
+
+The user does not have a full authenticated session yet, so the endpoint cannot require a normal access token. The temporary `mfa_token` is the credential for that specific verification step, and token-type checks keep it limited.
+
+#### Why can analysts block transactions they do not own?
+
+Analysts are operational security users. Their job is to review suspicious activity across the system, not only their own account. Backend role checks limit this power to analyst/admin roles and audit logs make it accountable.
+
+#### Why return `404` instead of `403` for another user's transaction?
+
+Returning `404` avoids confirming whether the transaction exists. That reduces enumeration risk, because an attacker cannot use response differences to discover other users' transaction IDs.
+
+#### Why allow analysts to change alerts across users?
+
+Fraud alerts are investigation records. Analysts need cross-user visibility because fraud response is a platform-level security function, not a personal account function.
+
+#### Why track status values like open, investigating, resolved, and false positive?
+
+Alert statuses model the investigation lifecycle. They help analysts distinguish new alerts from active cases, confirmed resolutions, and cases that were reviewed but judged harmless.
+
+#### Why no create/update/delete endpoints for audit logs?
+
+Audit logs are evidence. Normal API users should not be able to create, edit, or delete them because that would undermine their forensic value.
+
+#### Why restrict users to their own logs?
+
+Audit logs may contain sensitive account and security information. Normal users should only see their own activity, while wider audit visibility should be reserved for privileged administrative or compliance workflows.
+
+#### Why prevent admins from changing their own role or status?
+
+Self-modification is risky. It can cause accidental lockout, unsafe privilege changes, or abuse. Requiring another authorized admin for those actions creates a cleaner control boundary.
+
+#### Why do role changes take effect on next refresh instead of instantly?
+
+Roles are embedded in issued token scopes for efficient authorization. A role change affects newly issued tokens, while immediate enforcement can be achieved by invalidating the user's sessions.
+
+### Service Layer
+
+#### Why run fraud checks before session creation?
+
+A live session gives the user operational access. Fraud checks happen first so risky logins can be challenged or blocked before the system issues tokens and creates a foothold.
+
+#### Why create a session row if JWT is stateless?
+
+The session row gives the system stateful control over a stateless token design. It enables logout, revocation, refresh-token tracking, device context, and incident response.
+
+#### Why is device registration done after successful login?
+
+Only successful authentication should teach the system that a device is associated with the user. Registering devices before success could allow attackers to poison known-device history.
+
+#### Why not enable MFA immediately at setup?
+
+Setup only proves the secret was generated and shown. Confirmation proves the user actually scanned it and can generate valid codes. Enabling only after confirmation prevents accidental lockout.
+
+#### Why require a code to disable MFA?
+
+Disabling MFA is a high-risk action. Requiring a current code ensures that a stolen session alone is not enough to remove the second factor.
+
+#### Why use rules instead of machine learning?
+
+Rules are easier to explain, test, audit, and defend in a prototype. They show exactly which condition fired and why. Machine learning can be added later, but it needs representative data, monitoring, and explainability controls to be credible.
+
+#### How would you scale this toward ML later?
+
+The rule engine can become the explainable baseline while ML is added as another risk signal. Production ML would need quality training data, model monitoring, drift detection, bias checks, analyst feedback, and explainability reports.
+
+#### Why is explainability important in financial systems?
+
+Financial decisions may be questioned by users, analysts, auditors, or regulators. The system must be able to explain why a transaction was flagged, challenged, or blocked.
+
+#### Why a state machine?
+
+Transactions have legal lifecycle states. A state machine prevents invalid jumps, such as moving a completed transaction back to processing or completing a blocked transaction.
+
+#### Why is a flagged transaction not auto-processed?
+
+Flagged means the system has enough concern to require review. Auto-processing would defeat the purpose of the flag and could allow suspicious money movement before investigation.
+
+#### Why update behavior only after completion?
+
+Behavior baselines should learn from trusted activity. Learning from pending, flagged, or blocked transactions could normalize fraud attempts and weaken future detection.
+
+#### What would you change before production?
+
+I would move in-memory policy and rate limiting to shared durable storage, add stronger observability, use a secret manager, tighten CORS/host settings, add external penetration testing, and integrate real banking/payment rails.
+
+#### Why is policy store in-memory today?
+
+It is a prototype implementation that demonstrates the admin policy workflow. In production, policy should live in a persistent audited store so changes survive restarts and apply across all app instances.
+
+#### Why EMA instead of simple average?
+
+An exponential moving average adapts to recent behavior while still remembering history. A simple average can be dominated by old behavior and respond too slowly when a user's normal pattern changes.
+
+#### Why never learn from flagged or blocked transactions?
+
+Because those events may be fraud attempts. If the system learns from suspicious behavior, attackers can gradually poison the baseline and make future fraud look normal.
+
+#### Why is removing a device useful?
+
+Removing a device resets trust for that device. If it appears again later, the backend can treat it as suspicious and apply device anomaly scoring instead of assuming it is still safe.
+
+### Frontend
+
+#### Why also enforce roles in frontend if backend already does?
+
+Frontend role checks improve navigation and prevent users from seeing workflows they cannot use. The backend still remains the real security boundary if someone bypasses the UI.
+
+#### Why use context and reducer here?
+
+Authentication has multiple states: loading, logged out, logged in, MFA pending, session expired, and user updated. Context makes that state available across the app, while a reducer keeps transitions explicit and predictable.
+
+#### Why hydrate with `/auth/me` after storing tokens?
+
+The frontend should not blindly trust stored tokens. Calling `/auth/me` asks the backend whether the token still represents a valid active user and retrieves the current user profile.
+
+#### What is the mutex doing?
+
+The mutex prevents a refresh storm. If several requests fail at once because the access token expired, only one refresh request runs and the others wait for its result.
+
+#### Why not refresh separately in every page?
+
+Refresh logic is a session concern, not a page concern. Centralizing it in the HTTP client avoids duplication and ensures every page handles expiry consistently.
+
+#### Why distinguish all these login outcomes in the UI?
+
+Different outcomes require different user journeys. Invalid credentials, lockout, fraud block, MFA required, and successful login should not be presented as the same state.
+
+#### Why compute a local risk estimate if the backend has the real fraud engine?
+
+The local estimate is only user feedback. It helps users understand that large transfers may carry more risk, but the backend fraud engine remains the authority for the real decision.
+
+#### Why a separate analyst interface?
+
+Analysts perform operational review, not normal banking. A separate interface gives them alert queues, investigation context, and controlled action buttons without cluttering the customer experience.
+
+#### Why not let normal users resolve fraud flags themselves?
+
+Users may be mistaken, compromised, or malicious. Fraud resolution requires an independent operational role so suspicious activity is reviewed by someone with appropriate authority.
+
+#### Why split admin and analyst roles?
+
+The roles represent different responsibilities. Analysts investigate fraud; admins manage users, sessions, roles, statuses, and policy. Splitting them enforces least privilege.
+
+#### What operations are too sensitive for analysts?
+
+Changing user roles, suspending accounts, revoking all sessions, modifying system policy, and managing administrative privileges are governance actions and should remain admin-only.
+
+### Tests And Migrations
+
+#### Why not rely on automatic table creation?
+
+Automatic table creation is useful for quick prototypes but weak for controlled schema evolution. It does not provide a clear versioned history of database changes.
+
+#### Why use migrations in a master's project?
+
+Migrations demonstrate production-aware engineering. They show that schema changes are versioned, repeatable, reviewable, and designed to preserve existing data.
+
+---
+
 ## 6. Crucial Software Engineering Principles To Defend
 
 ### Separation of concerns
@@ -915,6 +1171,196 @@ Rules, policies, roles, and pages can grow without rewriting the whole system.
 - What are current limitations?
 - How would you scale rate limiting and policy settings?
 - How would you improve observability and monitoring?
+
+---
+
+## 7A. Full Answers To The Master's Panel Questions
+
+Use this section as the answer bank for the questions above. The goal is not to memorize every word, but to understand the reasoning well enough to answer naturally.
+
+### Architecture
+
+#### Why did you choose FastAPI and React?
+
+FastAPI was chosen because the backend is API-centered and security-heavy. It gives strong request validation through Pydantic, clear dependency injection for authentication and authorization, automatic OpenAPI documentation for testing, and good performance for a Python backend. Those features fit this project because many security controls sit at the API boundary: schema validation, role checks, token verification, and rate limiting.
+
+React was chosen because the frontend has several stateful workflows: login, MFA verification, route protection, token refresh, user dashboards, analyst review, and admin control. React with TypeScript makes it easier to model those states explicitly and catch interface mistakes earlier. The combination gives a clean full-stack separation: FastAPI enforces trust and business rules, while React presents guided workflows to users.
+
+Strong defense sentence:
+
+> FastAPI was selected for secure, validated API design, while React was selected for stateful role-based user workflows.
+
+#### Why a service layer instead of putting everything in routes?
+
+Routes should translate HTTP requests into application actions. They should not become the place where password checks, fraud scoring, transaction state transitions, and audit logic all live. The service layer keeps business logic independent from HTTP mechanics, which makes the code easier to test, reuse, and reason about.
+
+For example, `auth_router.py` should know how to receive `/auth/login`, extract request context, and return the right response code. But `auth_service.py` should own the actual login pipeline: find user, verify password, check lockout, run MFA logic, run fraud checks, create session, issue tokens, and record attempts.
+
+This separation also supports maintainability. If the login policy changes, the service changes without rewriting the route structure. If another interface later needs the same login logic, it can call the service rather than duplicating route code.
+
+#### Why store sessions if JWT is stateless?
+
+JWTs are useful because the backend can verify them without constantly reading session state. But pure stateless JWT authentication has a serious weakness: once a valid token is issued, it usually remains usable until it expires. In a banking system, that is not enough.
+
+The session table gives operational control. It supports logout, forced logout, revocation after suspicious activity, device tracking, refresh-token rotation, and incident response. The JWT proves the token was issued by the system, while the session record proves that the session is still allowed to exist.
+
+Strong defense sentence:
+
+> JWT gives efficient identity proof; the session table gives revocation and operational control.
+
+### Security
+
+#### Why use MFA pending tokens?
+
+An MFA pending token represents a user who has passed the password step but has not completed the second factor. That user should not receive a normal access token yet. A separate token type prevents token confusion: the system can enforce that an MFA token is valid only for the MFA completion endpoint and cannot be used to call normal protected APIs.
+
+This is safer than using a normal access token with a flag such as `mfa_complete=false`, because every protected endpoint would then need to remember to check that flag. With a dedicated token type, the access-token verifier rejects it automatically.
+
+Strong defense sentence:
+
+> The MFA pending token is a temporary credential for one unfinished workflow, not a general login token.
+
+#### How do you revoke a user's access immediately?
+
+Immediate revocation is handled through session invalidation and account status checks. If an admin suspends, locks, or closes an account, active sessions can be marked inactive in the database. Endpoints that require session liveness then reject the request even if the JWT has not expired yet.
+
+For broader control, the system can also revoke refresh tokens by invalidating the session row. That prevents the user from getting new access tokens. If the account status is no longer active, authentication dependencies reject access as well.
+
+In production, the strongest version of this design would check session liveness on every sensitive endpoint, use short access-token lifetimes, rotate refresh tokens, and invalidate all sessions on high-risk admin actions.
+
+#### How do you prevent brute force login attempts?
+
+The system uses several layers instead of one control. First, failed login attempts are counted and stored. Repeated failures trigger temporary account lockout. Second, sensitive endpoints such as login and MFA verification are rate limited. Third, fraud rules can treat unusual login behavior as risk context, especially when attempts come from unfamiliar IPs, devices, or locations.
+
+This is important because brute force defense should slow the attacker without permanently harming legitimate users. Rate limits reduce request volume, lockouts slow repeated attempts against one account, and audit records create evidence for review.
+
+#### What happens if a refresh token is stolen?
+
+A stolen refresh token is serious because it may be used to obtain new access tokens. The system reduces the risk by storing only a hash of the refresh token in the database, not the raw token. That means a database leak does not directly reveal usable refresh tokens.
+
+When refresh-token rotation is used, a refresh request issues a new token pair and replaces the old refresh token. If an old token is reused, that can be treated as suspicious because it may indicate theft or replay. The session can then be invalidated. Short access-token lifetimes also limit how long a stolen access token remains useful.
+
+Production hardening would add reuse detection, device binding, anomaly alerts, and automatic revocation of the token family when replay is detected.
+
+#### Why are fraud checks done before token issuance or transaction completion?
+
+Fraud checks happen early because prevention is safer than cleanup. During login, issuing a session before fraud evaluation would give a risky actor a foothold. During transaction creation, allowing a transaction to complete before fraud evaluation would make the system reactive instead of preventive.
+
+The design treats fraud evaluation as part of the workflow, not as an afterthought. Risk can lead to allow, challenge, flag, or block decisions before the system grants full access or lets money movement proceed.
+
+### Fraud and Risk
+
+#### Why use rule-based fraud scoring instead of machine learning?
+
+Rule-based scoring is explainable, deterministic, and testable. In a master's project and in regulated financial contexts, those qualities matter. If a rule fires, the system can say which condition triggered, why it mattered, and how much score it added.
+
+Machine learning can be powerful, but it requires representative training data, monitoring for drift, bias analysis, explainability tooling, and a feedback loop. Without those, an ML model may look advanced but be harder to defend. Rule-based scoring is the better foundation for a prototype because it demonstrates clear security reasoning.
+
+Strong defense sentence:
+
+> I chose rule-based fraud first because the project prioritizes explainability, auditability, and deterministic validation.
+
+#### How would you reduce false positives?
+
+False positives can be reduced by improving context and tuning thresholds. The system already uses known devices and behavior baselines so that normal behavior becomes less suspicious over time. It can be improved by adding more historical signals, separating low-risk anomalies from high-risk combinations, and using analyst feedback to tune rules.
+
+For example, a new device alone might only flag medium risk, but a new device plus restricted location plus unusually large amount should create a stronger response. The system should avoid blocking on weak single signals and reserve blocking for high-confidence combinations.
+
+In production, false-positive reduction would include analyst feedback loops, per-user risk profiles, threshold calibration, A/B evaluation, and monitoring the ratio of true fraud to incorrectly flagged activity.
+
+#### How are known devices and behavior baselines maintained?
+
+Known devices are maintained through device registration after successful authentication. The system records a device fingerprint for a user and updates its last-seen time when that device appears again. This prevents the same trusted device from repeatedly being treated as new.
+
+Behavior baselines are maintained from completed, trusted transactions. The system updates patterns such as average transaction amount, common locations, common devices, and recent behavior. Importantly, it does not learn from flagged or blocked transactions because that could normalize fraudulent behavior.
+
+Strong defense sentence:
+
+> The system learns only from trusted completed behavior, not from suspicious attempts.
+
+### Data Design
+
+#### Why store audit logs separately?
+
+Audit logs are evidence. They answer who did what, when, to which entity, from what context, and whether it succeeded. Keeping audit logs separate from normal business tables makes them easier to query, preserve, and reason about.
+
+If audit information were scattered across user, transaction, and session records, it would be harder to reconstruct incidents. A dedicated audit table supports compliance, forensic analysis, dispute investigation, and internal accountability.
+
+Strong defense sentence:
+
+> In a banking system, audit logs are not decorative; they are part of the trust model.
+
+#### Why use check constraints in the database?
+
+Application validation is important, but the database is the final source of truth. Check constraints protect data integrity even if a bug, script, migration, or future endpoint accidentally sends invalid values.
+
+For example, account status should only be values such as active, locked, suspended, or closed. Roles should only be user, analyst, or admin. Transaction status should follow valid states. Database constraints ensure invalid states cannot silently enter persistent storage.
+
+This is defense in depth applied to data integrity.
+
+#### Why use migrations?
+
+Migrations make database changes versioned, repeatable, and reviewable. In real systems, you cannot simply delete and recreate the database whenever the schema changes because live data must be preserved.
+
+Alembic migrations document how the schema evolves over time. They allow developers and deployment environments to apply the same schema changes consistently. They also make it possible to reason about rollback and deployment order.
+
+Strong defense sentence:
+
+> Migrations show that persistence was treated as a real evolving system, not as temporary demo storage.
+
+### Frontend Design
+
+#### Why still protect routes on frontend if backend already enforces security?
+
+The backend is the true security boundary, but frontend protection improves user experience and reduces accidental misuse. A normal user should not see admin pages flash briefly and then fail. An unauthenticated user should be guided to login instead of seeing broken screens.
+
+Frontend route guards also make the interface match the user's role. Customers, analysts, and admins see workflows relevant to them. But even if someone bypasses the frontend manually, the backend still enforces authentication, authorization, and ownership checks.
+
+Strong defense sentence:
+
+> Frontend guards guide the user; backend guards enforce trust.
+
+#### How does the frontend recover from expired tokens?
+
+The frontend uses a central HTTP client. When an API request receives an unauthorized response because the access token has expired, the client attempts to use the refresh token to obtain a new token pair. If refresh succeeds, it retries the original request with the new access token.
+
+The refresh process is centralized so every page behaves consistently. A mutex prevents multiple simultaneous failed requests from all trying to refresh at once. If refresh fails, tokens are cleared and the app emits a session-expired event so the user returns to login.
+
+#### How do role differences appear in the UI?
+
+Role differences appear through route guards, navigation filtering, and page capabilities. Normal users see banking workflows such as dashboard, transactions, profile, devices, and audit history. Analysts see fraud-review tools, alert queues, and transaction intervention actions. Admins see user management, role/status changes, session invalidation, and policy controls.
+
+The frontend mirrors the backend role hierarchy for usability. Admins can satisfy analyst-level UI access where appropriate, but the backend remains the authority for privileged actions.
+
+### Engineering Maturity
+
+#### What would you change before production?
+
+Before production, I would strengthen operational and infrastructure controls. Rate limiting and policy settings should move from in-memory storage to a shared durable store such as Redis or a database-backed configuration system. Secrets should be managed through a secure secret manager, with rotation policies and environment-specific keys.
+
+I would also add formal monitoring, centralized logging, alerting, dependency vulnerability scanning, secret scanning, external penetration testing, stronger CI/CD gates, backup and recovery procedures, and stricter production CORS and host settings. For transactions, I would integrate a real payment or banking rail rather than placeholder processing.
+
+#### What are current limitations?
+
+The main limitations are expected for a prototype. Rate limiting is currently in-memory, so it does not coordinate across multiple backend instances. Some policy settings are process-local rather than durable. The fraud engine is explainable and testable, but still rule-based rather than trained from large real-world fraud data. Transaction processing is a controlled internal workflow, not a live integration with banking rails.
+
+The important defense point is honesty: these are known limitations, and the architecture already points toward how to improve them.
+
+#### How would you scale rate limiting and policy settings?
+
+Rate limiting should move to Redis or another shared low-latency store. That would allow multiple application instances to enforce the same limits consistently. Keys should include endpoint, account, IP address, and possibly device fingerprint, depending on the risk being controlled.
+
+Policy settings should move to a persistent configuration table or configuration service with audit logging, validation, versioning, and safe rollout. Admin changes should be recorded, and high-risk policy changes may require approval or multi-person control in production.
+
+#### How would you improve observability and monitoring?
+
+I would add structured logs, metrics, traces, and security alerts. Important metrics include login failures, account lockouts, MFA failures, token refresh failures, fraud rule triggers, blocked transactions, admin actions, API latency, and database errors.
+
+For monitoring, I would use dashboards and alert thresholds. For example, a sudden increase in failed logins or MFA failures may indicate credential stuffing. A spike in blocked transactions from one country may indicate fraud activity or a misconfigured rule. Observability turns the system from something that merely runs into something operators can understand and defend.
+
+Strong defense sentence:
+
+> Observability is how a secure system proves what is happening while it is happening.
 
 ---
 
@@ -3923,3 +4369,566 @@ That line is extremely useful in a defense because it connects both sides cleanl
 Another excellent bridge line:
 
 > The frontend is responsible for clarity, guidance, and controlled navigation; the backend is responsible for trust, validation, and final authorization.
+## Defense Fast Pack (Added For Presentation Readiness)
+
+### A. What To Say In 20 Seconds
+
+This is a security-first banking prototype with full login and MFA flow, rule-based fraud scoring, analyst-review workflow, and immutable audit logging.  
+The system intentionally evaluates fraud before granting sessions and before processing transactions, and all sensitive actions are persisted for traceability.
+
+---
+
+### B. Architecture Snapshot You Can Explain Quickly
+
+1. Frontend sends authenticated requests with device and location context headers.
+2. Auth and transaction routers validate input and enforce role/scope dependencies.
+3. Service layer runs business rules and fraud checks.
+4. Fraud engine aggregates explainable rule scores into `allow/flag/challenge/block`.
+5. Transactions move through an explicit state machine.
+6. Audit logs persist sensitive events for forensic review.
+
+Key implementation references:
+- `app/services/auth_service.py`
+- `app/services/transaction_service.py`
+- `app/services/fraud_service.py`
+- `app/api/audit_router.py`
+- `secure-bank-frontend/src/lib/http.ts`
+
+---
+
+### C. 5-Minute Speaking Script (Practical)
+
+1. "My design separates concerns clearly: routers handle HTTP, services handle logic, models persist state, and schemas validate contract boundaries."
+2. "Secure login is not a single check. It is password validation, account-state checks, optional MFA verification, fraud evaluation, then session/token issuance."
+3. "Fraud evaluation is explainable and rule-based. I can show which rule fired, why it fired, and how it affected the final risk score."
+4. "I use device fingerprint, IP context, and geolocation signals. Geolocation now contributes in two ways: restricted-country policy and baseline anomaly detection."
+5. "Transactions are fraud-gated before processing and then moved via a state machine; flagged or blocked states are explicit."
+6. "Every sensitive operation is audit-tracked and readable through the audit APIs and UI."
+7. "So the system demonstrates security controls, operational traceability, and maintainable software structure."
+
+---
+
+### D. Live Demo Flow (Covers Required Criteria)
+
+#### 1) Secure Login Functionality
+- Login with valid credentials.
+- Show authenticated dashboard and route protection.
+
+#### 2) MFA Simulation
+- Use MFA-enabled account.
+- Show `/auth/login` leading to `/mfa/verify`.
+- Enter TOTP (or backup key) and complete access.
+
+#### 3) Basic Fraud Detection Logic
+- Open Demo Mode panel and switch location preset.
+- Use `Safe GB` for normal behavior.
+- Use `Restricted NG` (with `FRAUD_RESTRICTED_COUNTRIES=NG,RU`) to trigger policy-based risk.
+- Use `Anomaly DE` to demonstrate geolocation baseline anomaly.
+- Submit transactions and show status/risk changes.
+
+#### 4) Logging / Audit Tracking
+- Open Audit Trail page.
+- Show recent actions with timestamp, action type, entity context, and success/failure.
+- Point out that this is immutable read-only evidence from backend logs.
+
+---
+
+### E. "Money Leaving Account" Talking Point
+
+You now have a computed user balance endpoint and frontend integration:
+- Endpoint: `GET /users/me/balance`
+- Dashboard displays dynamic current balance and movement.
+- Transaction detail shows `Before`, `Movement`, and `After/Projected After`.
+
+This removes the static placeholder narrative and gives concrete movement evidence.
+
+---
+
+### F. How To Switch Demo Mode (Very Important)
+
+1. Open the app UI.
+2. Click **Demo Mode** panel (bottom area).
+3. Choose a preset:
+   - `Auto`
+   - `Safe GB`
+   - `Restricted NG`
+   - `Anomaly DE`
+4. Perform login/transaction actions; requests now include the chosen location context headers.
+
+Technical note:
+- Override persists in browser local storage key `demo.location.override.v1`.
+- Choosing `Auto` clears override and uses browser locale/timezone inference again.
+
+---
+
+### G. High-Probability Panel Questions + Strong Answers
+
+**Q: Why rule-based fraud instead of ML?**  
+A: For this prototype, explainability and deterministic behavior are priorities. Rules are auditable, testable, and easy to defend.
+
+**Q: Where is fraud enforced in the flow?**  
+A: Before session issuance in login and before transaction processing in transaction creation.
+
+**Q: How do you prove geolocation matters on localhost?**  
+A: Demo Mode location presets force request location headers, allowing controlled demonstrations of restricted-country and anomaly rules.
+
+**Q: How do you avoid hidden side effects?**  
+A: Clear service boundaries, explicit transaction states, and centralized audit logging for sensitive operations.
+
+**Q: What if MFA is bypassed?**  
+A: MFA verification uses a short-lived pending token flow; only successful verification receives full auth tokens.
+
+---
+
+### H. Final Preparation Checklist
+
+1. Backend running with `.env` containing `FRAUD_RESTRICTED_COUNTRIES=NG,RU`.
+2. Frontend running with Demo Mode visible.
+3. MFA-enabled test account prepared.
+4. One normal transaction and one fraud-triggering transaction prepared.
+5. Audit Trail page opened to show evidence immediately.
+
+---
+
+## H2. Automated Test Evidence Snapshot (Use This On Slides)
+
+Execution date: **April 28, 2026**  
+Environment: repository virtual environment (`venv`)  
+Command used:
+
+```bash
+.\venv\Scripts\python.exe -m pytest tests -q
+```
+
+Result summary:
+- **261 passed**
+- **0 failed**
+- Runtime: about **4.30s**
+
+Targeted fraud velocity proof:
+
+```bash
+.\venv\Scripts\python.exe -m pytest tests/test_fraud_scoring.py -q
+```
+
+Result summary:
+- **5 passed**
+- Includes:
+  - `test_velocity_rule_triggers_on_threshold_with_multiple_ips`
+  - `test_velocity_rule_does_not_trigger_for_single_ip`
+  - `test_velocity_rule_does_not_trigger_below_attempt_threshold`
+
+How to explain this in defense:
+> We did not only implement fraud velocity logic; we validated both trigger and non-trigger paths, so the rule is deterministic and explainable under questioning.
+
+---
+
+## I. Testing, Failure Handling, and Security Validation (Defense-Ready)
+
+### 1) How The System Was Tested
+
+Use this structure in your defense:
+
+1. **Unit testing**:
+- Tests small pieces of logic in isolation (single function/class).
+- Examples in this project:
+  - Fraud score threshold mapping.
+  - Behavior baseline math (EMA, stale max reset).
+  - Transaction state transition rules.
+
+2. **Integration/API testing**:
+- Tests route behavior, status codes, validation, auth boundaries, and service mapping.
+- Examples in this project:
+  - `POST /auth/login` success/error mapping.
+  - Protected endpoints returning `401` without token.
+  - Analyst-only actions returning `403` for regular users.
+
+3. **Workflow validation (end-to-end style)**:
+- Manual walkthroughs of complete business flows:
+  - login -> MFA verify -> dashboard
+  - create transaction -> fraud evaluation -> flagged/blocked/approved path
+  - view fraud alerts and audit logs
+
+Suggested references while speaking:
+- `tests/test_api.py`
+- `tests/test_behavior_service.py`
+- `tests/test_fraud_scoring.py`
+- `tests/test_transaction_state_machine.py`
+
+Talking line:
+> We tested at multiple levels: unit for deterministic logic, API/integration for security boundaries and HTTP behavior, and full workflow validation for operational correctness.
+
+#### Exact "Where It Was Validated" Map (Use This In Q&A)
+
+If a panel asks, "Show me exactly where this was validated in unit tests," use this mapping:
+
+1. **Fraud score decision thresholds** (`allow`, `flag`, `challenge`, `block`):
+- File: `tests/test_fraud_scoring.py`
+- Tests:
+  - `test_score_to_action_thresholds`
+  - `test_score_to_severity_thresholds`
+- Code under test:
+  - `app/services/fraud_service.py`
+  - `_score_to_action()`
+  - `_score_to_severity()`
+
+2. **Velocity fraud rule (failed attempts + multiple IPs in short window)**:
+- File: `tests/test_fraud_scoring.py`
+- Tests:
+  - `test_velocity_rule_triggers_on_threshold_with_multiple_ips`
+  - `test_velocity_rule_does_not_trigger_for_single_ip`
+  - `test_velocity_rule_does_not_trigger_below_attempt_threshold`
+- Code under test:
+  - `app/services/fraud_service.py`
+  - `VelocityRule.evaluate()`
+- What is proven:
+  - Rule triggers only when both conditions are true:
+    - failed-attempt count meets threshold
+    - attempts come from at least 2 distinct IPs
+  - This reduces false positives from normal retries on one network.
+
+3. **Geolocation and behavior anomaly logic**:
+- File: `tests/test_behavior_service.py`
+- Test group:
+  - `TestPatternAnomalyRuleIntegration`
+- Supporting behavior tests:
+  - EMA and stale baseline reset tests in the same file
+- Code under test:
+  - `app/services/behavior_service.py`
+  - `PatternAnomalyRule` integration from `app/services/fraud_service.py`
+- What is proven:
+  - Baseline updates are mathematically stable over time.
+  - Outlier transactions can be detected against user-specific history.
+
+4. **API validation and auth boundary handling**:
+- File: `tests/test_api.py`
+- Representative tests:
+  - weak password -> `422` (schema validation)
+  - missing required fields -> `422`
+  - unauthorized request -> `401`
+  - insufficient role/scope -> `403`
+  - duplicate user conflicts -> `409`
+- Code under test:
+  - `app/api/*_router.py`, `app/api/deps.py`, schema validators
+- What is proven:
+  - The API rejects bad input at boundary level and enforces authorization rules.
+
+5. **Rate limiting and abuse resistance**:
+- File: `tests/test_rate_limiter.py`
+- Coverage:
+  - direct unit tests of limiter logic
+  - HTTP integration tests on `/auth/login`, `/auth/mfa/verify`, `/auth/register`
+- Code under test:
+  - `app/core/rate_limiter.py`
+- What is proven:
+  - Burst abuse gets deterministic `429` with rate-limit headers.
+  - Counters are isolated by IP and endpoint.
+
+#### How To Explain Unit vs API Test In One Sentence
+
+- **Unit test**: proves one rule/function is correct in isolation.
+- **API test**: proves the external HTTP contract, validation, and security responses are correct when modules are wired together.
+
+In your defense, say:
+> We use unit tests to prove core decisions and API tests to prove enforced behavior at the real trust boundary.
+
+---
+
+### 2) How Authentication Failures Were Handled
+
+Your backend handles auth failures explicitly and safely:
+
+1. **Invalid credentials**:
+- Return unauthorized response.
+- Record failed login attempt for audit/risk signals.
+
+2. **Account lockout**:
+- Failed-attempt counter triggers temporary lockout after threshold.
+- Prevents brute-force continuation.
+
+3. **MFA required path**:
+- Password can pass but full tokens are withheld.
+- Client gets MFA pending token and must complete verification.
+
+4. **Fraud-blocked login**:
+- Even with valid credentials, login can be blocked by fraud policy.
+- This demonstrates layered security, not just password checking.
+
+5. **Session/token lifecycle failures**:
+- Refresh-token flow rotates tokens.
+- Expired/invalid refresh leads to forced logout behavior in client.
+
+Talking line:
+> We do not treat authentication as binary password acceptance. We enforce account-state checks, MFA gating, fraud policy gates, and session controls before granting final access.
+
+---
+
+### 3) Vulnerability Identification and Mitigation
+
+#### What "vulnerability assessment" means
+- A vulnerability is a weakness that could be abused.
+- Identification means finding where the system can be broken.
+- Mitigation means reducing likelihood/impact through controls.
+
+#### Practical categories you can discuss
+
+1. **Injection risks (including SQL Injection)**:
+- SQL injection is when untrusted input becomes executable SQL.
+- Mitigation in this project:
+  - SQLAlchemy ORM query construction (parameterized behavior),
+  - Pydantic input validation before service logic,
+  - no raw string-built SQL for user inputs in route logic.
+
+2. **Broken authentication / session abuse**:
+- Risks: token theft, session replay, weak logout behavior.
+- Mitigation:
+  - hashed token storage,
+  - active-session checks,
+  - logout invalidation,
+  - refresh token rotation.
+
+3. **Authorization bypass**:
+- Risks: regular users invoking analyst/admin functions.
+- Mitigation:
+  - role/scope dependency gates,
+  - explicit `require_analyst` / role hierarchy checks,
+  - tests that assert forbidden access behavior.
+
+4. **Brute force / credential stuffing**:
+- Mitigation:
+  - failed-attempt tracking,
+  - lockout windows,
+  - rate limiting controls for auth endpoints.
+
+5. **Fraud and anomaly abuse**:
+- Mitigation:
+  - rule-based risk scoring,
+  - challenge/block outcomes,
+  - analyst workflow for high-risk cases.
+
+6. **Auditability gaps**:
+- Mitigation:
+  - append-only style audit log read endpoints,
+  - event traceability for sensitive actions.
+
+#### Penetration testing vs unit testing (simple explanation)
+
+- **Unit testing**:
+  - Developer-built automated checks.
+  - Validates expected behavior of known logic.
+
+- **Penetration testing**:
+  - Security-focused adversarial testing.
+  - Simulates attacker behavior (e.g., auth bypass attempts, injection probing, privilege escalation).
+
+How to say this honestly:
+> We have strong automated unit and API tests. Formal external penetration testing is a recommended next step for production-grade security assurance.
+
+---
+
+### 3B) Penetration Testing Deep Dive (Codebase-Specific)
+
+Use this section when the panel asks: "How would you penetration-test this system?"
+
+#### What penetration testing is in this project
+
+Penetration testing means simulating attacker behavior against the running API and checking whether:
+- controls block abuse,
+- errors are safely handled,
+- sensitive data is protected,
+- actions are traceable in audit logs.
+
+For your prototype, frame it as **controlled adversarial validation** against:
+- auth endpoints,
+- token/session lifecycle,
+- authorization boundaries,
+- fraud decision paths,
+- rate limiting and lockouts.
+
+#### Test scope mapped to your code
+
+1. **Authentication attack surface**
+- Endpoints: `/auth/login`, `/auth/mfa/verify`, `/auth/refresh`, `/auth/logout`
+- Relevant code:
+  - `app/api/auth_router.py`
+  - `app/services/auth_service.py`
+  - `app/core/totp.py`
+  - `app/core/rate_limiter.py`
+- Attacks to simulate:
+  - credential stuffing / brute-force,
+  - MFA bypass attempts,
+  - refresh token replay,
+  - malformed token payloads.
+
+2. **Authorization/privilege surface**
+- Endpoints: analyst/admin APIs (fraud + admin routes)
+- Relevant code:
+  - `app/api/deps.py`
+  - `app/api/fraud_router.py`
+  - `app/api/admin_router.py`
+- Attacks to simulate:
+  - regular user calling analyst/admin endpoints,
+  - token scope/role tampering attempts,
+  - direct object access (try operations on data not owned by user).
+
+3. **Injection/input abuse surface**
+- Relevant code:
+  - Pydantic schemas in `app/schemas/*`
+  - ORM queries in service layer (`app/services/*`)
+- Attacks to simulate:
+  - SQL injection strings in login/transaction inputs,
+  - overlong payloads / invalid JSON types,
+  - enum/status tampering.
+
+4. **Fraud control evasion surface**
+- Relevant code:
+  - `app/services/fraud_service.py`
+  - `app/services/behavior_service.py`
+- Attacks to simulate:
+  - velocity behavior from rotating IPs,
+  - restricted-country geolocation path,
+  - high-risk transaction patterns intended to avoid thresholds.
+
+#### Practical methodology (defense-friendly)
+
+1. **Recon and endpoint inventory**
+- Build an endpoint list from routers in `app/api`.
+- Classify endpoints: public vs authenticated vs privileged.
+
+2. **Threat modeling pass**
+- For each endpoint, ask:
+  - what attacker wants,
+  - what trust assumption is being made,
+  - what control should stop abuse.
+
+3. **Adversarial test execution**
+- Send crafted requests (invalid tokens, forged roles, malicious payloads).
+- Verify expected blocking responses (`401`, `403`, `422`, `429`) and no sensitive leakage.
+
+4. **Evidence capture**
+- Capture request, response code/body (sanitized), and expected control.
+- Correlate with audit trail where applicable.
+
+5. **Report and remediation loop**
+- Record finding severity: Critical / High / Medium / Low.
+- Map each finding to code location and fix recommendation.
+- Re-test after fix.
+
+#### Example penetration test cases you can present
+
+1. **Brute-force simulation on login**
+- Action: rapid repeated `POST /auth/login` attempts from same IP.
+- Expected:
+  - limiter triggers `429`,
+  - login denied,
+  - events traceable.
+- Defensive control:
+  - `app/core/rate_limiter.py`
+
+2. **MFA bypass attempt**
+- Action: attempt protected calls using MFA-pending flow artifacts or no completed MFA state.
+- Expected:
+  - token validation fails for normal access path,
+  - request blocked (`401/403` depending on route).
+- Defensive controls:
+  - token-type separation and auth dependency checks.
+
+3. **Role escalation attempt**
+- Action: normal user token calls analyst/admin endpoint.
+- Expected:
+  - blocked with `403`,
+  - no privileged action executed.
+- Defensive controls:
+  - dependency gates in `app/api/deps.py`
+  - tested in `tests/test_api.py`, `tests/test_roles.py`
+
+4. **SQL injection probe**
+- Action: payload like `' OR 1=1 --` in authentication/transaction fields.
+- Expected:
+  - treated as string input, not executable SQL,
+  - validation or auth failure response.
+- Defensive controls:
+  - SQLAlchemy ORM query construction,
+  - schema-level validation.
+
+5. **Fraud-evasion scenario**
+- Action: multiple failed attempts from distinct IPs in short window.
+- Expected:
+  - velocity rule contributes high risk signal,
+  - workflow moves to challenge/flag/block depending on score.
+- Defensive controls:
+  - `VelocityRule` in `app/services/fraud_service.py`
+  - validated by `tests/test_fraud_scoring.py`
+
+#### What to say about tools (without over-claiming)
+
+You can say:
+> We performed structured adversarial testing using scripted/manual API calls and automated regression tests. A formal external penetration test is the next production-hardening step.
+
+Do not claim external red-team certification unless it actually occurred.
+
+#### How to discuss findings maturity
+
+Use this honest maturity model:
+- **Current**:
+  - strong unit and API security-boundary tests,
+  - explicit authz gates,
+  - rate limiting, MFA flow, fraud rules, audit trail.
+- **Next step**:
+  - independent penetration test engagement,
+  - automated DAST in CI,
+  - dependency CVE scanning + secret scanning,
+  - periodic threat-model review.
+
+#### One-slide summary line
+
+> Our penetration-testing approach targeted authentication abuse, authorization bypass, injection attempts, and fraud-control evasion; expected controls were verified through blocked responses, rule activation, and audit traceability.
+
+---
+
+### 4) Peer Review and Validation Process
+
+If asked "How was quality validated beyond your own coding?", present a standard engineering process:
+
+1. **Code review pass**:
+- Review service-level security decisions:
+  - auth flow,
+  - fraud gating points,
+  - transaction state transitions,
+  - audit persistence.
+
+2. **Test evidence review**:
+- Confirm key security tests exist and pass.
+- Verify regressions are caught by automated tests.
+
+3. **Threat-oriented walkthrough**:
+- Walk through abuse scenarios:
+  - brute-force login,
+  - role bypass attempt,
+  - suspicious transaction path.
+
+4. **Demo validation checklist**:
+- Validate all required criteria are visible in live demo.
+- Use Demo Mode to force geolocation and fraud demonstrations on localhost.
+
+Talking line:
+> Validation combined code review, automated test evidence, and scenario walkthroughs focused on likely abuse cases.
+
+---
+
+### 5) Short "Exam-Style" Answers You Can Reuse
+
+**Q: What is unit testing?**  
+A: Unit testing verifies small logic units in isolation. It catches regressions early and proves deterministic business rules.
+
+**Q: What is penetration testing?**  
+A: Penetration testing simulates attacker behavior against the running system to find exploitable weaknesses not always visible in normal tests.
+
+**Q: How did you address SQL injection risk?**  
+A: We rely on ORM-driven parameterized queries, strict input validation with schemas, and we avoid raw SQL built from user input in endpoint logic.
+
+**Q: How do you handle auth failures safely?**  
+A: Failed attempts are logged, lockout policy is enforced, MFA is required when applicable, and fraud policy can block login even with valid credentials.
+
+**Q: What would you do next for production hardening?**  
+A: Add formal penetration testing, continuous dependency vulnerability scanning, secret rotation policy enforcement, and periodic threat-model reviews.

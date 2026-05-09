@@ -155,6 +155,8 @@ def _add_login_attempt(
     failure_reason: Optional[str] = None,
     mfa_required: bool = False,
     mfa_success: Optional[bool] = None,
+    location_country: Optional[str] = None,
+    location_city: Optional[str] = None,
 ) -> None:
     """Add one login attempt to the session (no commit – caller commits for atomicity)."""
     attempt = LoginAttempt(
@@ -166,13 +168,15 @@ def _add_login_attempt(
         failure_reason=failure_reason,
         mfa_required=mfa_required,
         mfa_success=mfa_success,
+        location_country=location_country,
+        location_city=location_city,
     )
     db.add(attempt)
 
 
 # Custom error for fraud challenge (API can return 403 with code for MFA step-up)
 class FraudChallengeRequiredError(ValueError):
-    """Raised when fraud engine requires MFA challenge before issuing tokens."""
+    """Raised when fraud engine requires step-up verification but none is available."""
     pass
 
 
@@ -216,7 +220,8 @@ def login(
     """
     Authenticate user, run fraud check, then create session + tokens if allowed.
     - block: no session, no tokens, attempt + alert committed, FraudBlockedError.
-    - challenge: no session, no tokens, attempt + alert committed, FraudChallengeRequiredError.
+    - challenge + MFA enabled: no session, mfa_pending token returned for step-up.
+    - challenge + no MFA: no session, fail closed because no second factor exists.
     - flag / allow: session + tokens in one atomic commit; risk_flagged=True when flag.
     """
     user = _resolve_user(db, login_data)
@@ -227,6 +232,7 @@ def login(
         _add_login_attempt(
             db, user_id=None, email=email_used, ip_address=ip_address,
             user_agent=user_agent, success=False, failure_reason="user_not_found",
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise ValueError("Invalid email/username or password")
@@ -240,6 +246,7 @@ def login(
         _add_login_attempt(
             db, user_id=user.id, email=user.email, ip_address=ip_address,
             user_agent=user_agent, success=False, failure_reason=failure_reason,
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise ValueError("Invalid email/username or password")
@@ -248,6 +255,7 @@ def login(
         _add_login_attempt(
             db, user_id=user.id, email=user.email, ip_address=ip_address,
             user_agent=user_agent, success=False, failure_reason=f"account_{user.account_status}",
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise ValueError(f"Account is {user.account_status}")
@@ -256,29 +264,13 @@ def login(
         _add_login_attempt(
             db, user_id=user.id, email=user.email, ip_address=ip_address,
             user_agent=user_agent, success=False, failure_reason="account_locked",
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise ValueError("Account is temporarily locked")
     if user.locked_until and user.locked_until <= now:
         user.locked_until = None
         user.failed_login_attempts = 0
-
-    # MFA enabled: password check passed, but do not issue full tokens yet.
-    # Issue a short-lived mfa_pending token so the client can call
-    # POST /auth/mfa/verify without re-sending the password.
-    if user.mfa_enabled:
-        mfa_token, _ = create_mfa_pending_token(user.id)
-        _add_login_attempt(
-            db, user_id=user.id, email=user.email, ip_address=ip_address,
-            user_agent=user_agent, success=False,
-            failure_reason="mfa_verification_required",
-            mfa_required=True,
-            mfa_success=False,
-        )
-        db.commit()
-        raise MFARequiredError(
-            mfa_token=mfa_token, user_id=user.id, email=user.email
-        )
 
     # Fraud check before session creation (alert added to db with commit_alert=False)
     fraud = fraud_service or FraudService()
@@ -299,17 +291,51 @@ def login(
         _add_login_attempt(
             db, user_id=user.id, email=user.email, ip_address=ip_address,
             user_agent=user_agent, success=False, failure_reason="fraud_block",
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise FraudBlockedError("Login blocked by security policy")
 
     if fraud_result.action == "challenge":
+        if user.mfa_enabled:
+            mfa_token, _ = create_mfa_pending_token(user.id)
+            _add_login_attempt(
+                db, user_id=user.id, email=user.email, ip_address=ip_address,
+                user_agent=user_agent, success=False, failure_reason="fraud_challenge_mfa_required",
+                mfa_required=True, mfa_success=False,
+                location_country=location_country, location_city=location_city,
+            )
+            db.commit()
+            raise MFARequiredError(
+                mfa_token=mfa_token, user_id=user.id, email=user.email
+            )
         _add_login_attempt(
             db, user_id=user.id, email=user.email, ip_address=ip_address,
-            user_agent=user_agent, success=False, failure_reason="fraud_challenge_required",
+            user_agent=user_agent, success=False, failure_reason="fraud_challenge_unavailable",
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
-        raise FraudChallengeRequiredError("Security challenge required")
+        raise FraudChallengeRequiredError(
+            "Security challenge required, but no MFA method is enabled"
+        )
+
+    # MFA enabled: password and fraud checks passed, but do not issue full tokens yet.
+    # Issue a short-lived mfa_pending token so the client can call
+    # POST /auth/mfa/verify without re-sending the password.
+    if user.mfa_enabled:
+        mfa_token, _ = create_mfa_pending_token(user.id)
+        _add_login_attempt(
+            db, user_id=user.id, email=user.email, ip_address=ip_address,
+            user_agent=user_agent, success=False,
+            failure_reason="mfa_verification_required",
+            mfa_required=True,
+            mfa_success=False,
+            location_country=location_country, location_city=location_city,
+        )
+        db.commit()
+        raise MFARequiredError(
+            mfa_token=mfa_token, user_id=user.id, email=user.email
+        )
 
     # allow or flag: create session + tokens in one transaction
     scopes = _scopes_for_user(user)
@@ -343,6 +369,7 @@ def login(
     _add_login_attempt(
         db, user_id=user.id, email=user.email, ip_address=ip_address,
         user_agent=user_agent, success=True, mfa_required=user.mfa_enabled,
+        location_country=location_country, location_city=location_city,
     )
     user.last_login = now
     user.failed_login_attempts = 0
@@ -610,7 +637,8 @@ def verify_mfa_and_login(
       2. Load and verify the user is still active.
       3. Verify the TOTP code (or backup code) via mfa_service.
       4. Run fraud check (same as non-MFA login path).
-      5. On allow/flag: create session + issue full access + refresh tokens.
+      5. On allow/flag/challenge: create session + issue full tokens.
+         A challenge is considered satisfied because the MFA code just passed.
       6. Log all outcomes in LoginAttempt for audit.
 
     Raises:
@@ -649,6 +677,7 @@ def verify_mfa_and_login(
             user_agent=user_agent, success=False,
             failure_reason="mfa_secret_not_found",
             mfa_required=True, mfa_success=False,
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise
@@ -659,6 +688,7 @@ def verify_mfa_and_login(
             user_agent=user_agent, success=False,
             failure_reason="invalid_mfa_code",
             mfa_required=True, mfa_success=False,
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise ValueError("Invalid MFA code")
@@ -683,9 +713,12 @@ def verify_mfa_and_login(
             db, user_id=user.id, email=user.email, ip_address=ip_address,
             user_agent=user_agent, success=False, failure_reason="fraud_block",
             mfa_required=True, mfa_success=True,
+            location_country=location_country, location_city=location_city,
         )
         db.commit()
         raise FraudBlockedError("Login blocked by security policy")
+
+    challenge_satisfied = fraud_result.action == "challenge"
 
     # Step 5: create session + issue tokens atomically
     scopes = _scopes_for_user(user)
@@ -722,6 +755,7 @@ def verify_mfa_and_login(
         db, user_id=user.id, email=user.email, ip_address=ip_address,
         user_agent=user_agent, success=True,
         mfa_required=True, mfa_success=True,
+        location_country=location_country, location_city=location_city,
     )
     user.last_login = now
     user.failed_login_attempts = 0
@@ -746,6 +780,6 @@ def verify_mfa_and_login(
         username=user.username,
         mfa_required=False,   # MFA is now complete — tokens issued
         mfa_setup_required=False,
-        risk_flagged=(fraud_result.action == "flag"),
+        risk_flagged=(fraud_result.action == "flag" or challenge_satisfied),
     )
     
